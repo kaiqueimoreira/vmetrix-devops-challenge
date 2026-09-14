@@ -46,9 +46,13 @@ aprovação explícita para produção e rollback sem novo build.
 
 - (+) Git é a fonte da verdade do que roda em cada ambiente; `git log` responde "quem, quando, o quê".
 - (+) Rollback em segundos, sem depender do CI estar saudável (opção 3).
-- (−) O bot faz push direto na `main` só em `deploy/**`. Com proteção de branch exigindo PR,
-  o bot precisa estar na lista de bypass do ruleset. A alternativa sem bypass é abrir PR
-  auto-mergeável, que é mais lento.
+- (−) O bot faz push direto na `main` (só em `deploy/**`), furando o "PR obrigatório". Como o
+  `GITHUB_TOKEN` não pode entrar no bypass de ruleset, o push usa uma **deploy key** de escrita, que é
+  o único ator no bypass. A chave fica como secret dos Environments `staging`/`production` (a de
+  produção só é entregue ao job após a aprovação). Risco residual: a chave permite escrever em qualquer
+  caminho da `main`. Mitigações futuras: GitHub App com permissão mínima, ou mover os overlays para um
+  repositório de configuração separado. A alternativa sem bypass (PR de deploy com auto-merge) foi
+  descartada por adicionar um ciclo de CI a cada deploy de staging.
 - (−) Gate duplo pode parecer redundante. Ele separa **aprovação de conteúdo** (auditada no
   GitHub) de **janela de execução** (operador no ArgoCD). Se o time preferir, basta ligar o
   auto-sync em produção e manter só o Gate 1.

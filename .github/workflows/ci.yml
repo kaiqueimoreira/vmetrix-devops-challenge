@@ -210,6 +210,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main
+          # Deploy key com escrita, no bypass do ruleset da main (GITHUB_TOKEN não pode ter bypass).
+          # Secret do Environment `staging`: só existe para jobs desse ambiente.
+          ssh-key: ${{ secrets.GITOPS_DEPLOY_KEY }}
       - uses: ./.github/actions/gitops-set-image
         with:
           service: svc-calc

@@ -61,10 +61,17 @@ runs:
         git commit -m "$MSG" -m "$REASON" -m "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
         branch="${GITHUB_REF_NAME}"
         # Outros commits podem ter chegado na main durante o pipeline: rebase + retry.
+        # Violação de ruleset (GH013) não se resolve com retry: falha imediatamente.
         for attempt in 1 2 3 4 5; do
-          if git push origin "HEAD:${branch}"; then
+          if git push origin "HEAD:${branch}" >/tmp/push.log 2>&1; then
+            cat /tmp/push.log
             echo "changed=true" >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+          cat /tmp/push.log
+          if grep -q 'GH013' /tmp/push.log; then
+            echo "::error::Push bloqueado pelo ruleset da branch ${branch}. O checkout deve usar a deploy key GITOPS_DEPLOY_KEY e ela precisa estar no bypass do ruleset (SOLUTION.md, seção 7.3)."
+            exit 1
           fi
           echo "Push rejeitado (tentativa ${attempt}); rebase em origin/${branch}..."
           sleep $((attempt * 2))
