@@ -127,7 +127,8 @@ feature/*  ──PR──►  develop  ──PR (release)──►  main
 | `main` | produção | publica libs com versão nova, publica imagens, atualiza **staging** via GitOps. **Produção** só via `promote-production` |
 
 Proteção (rulesets) em `main` e `develop`: PR obrigatório, check `ci-result` obrigatório, sem force push
-e sem deleção. O bot `github-actions` tem bypass apenas para os commits de `deploy/**` (ver seção 7.3).
+e sem deleção. A única exceção é a deploy key `gitops-bot`, usada pelos jobs de deploy para gravar a tag
+no overlay (ver seção 7.3).
 
 ### Versionamento
 
@@ -280,7 +281,8 @@ repositório de origem, os namespaces `svc-calc-*` e os tipos de recurso permiti
 |---|---|---|
 | Maven no CI (ler/publicar libs) | `GITHUB_TOKEN` | Efêmero por run; `maven-settings.xml` lê `${env.GITHUB_TOKEN}`; `packages: write` só nos jobs que precisam |
 | GHCR (push) | `GITHUB_TOKEN` | `docker/login-action`, só quando `push: true` |
-| Commit GitOps e PR de bump | `GITHUB_TOKEN` | `contents: write` / `pull-requests: write` só nesses jobs |
+| Commit GitOps na `main` | Deploy key `gitops-bot` (escrita), secret `GITOPS_DEPLOY_KEY` | Secret **de Environment** (`staging` e `production`): só jobs desses ambientes a recebem, e o de produção só após aprovação. É o único ator no bypass do ruleset da `main` |
+| PR de bump | `GITHUB_TOKEN` | `contents: write` / `pull-requests: write` só nesse job |
 | Permissões default | `contents: read` | Top-level do `ci.yml`, elevadas por job (least privilege) |
 | Pull de imagem no kind | nenhuma se os pacotes GHCR forem públicos; senão `GHCR_USER`/`GHCR_TOKEN` (PAT `read:packages`) em variável de ambiente do `bootstrap-cluster.sh`, virando Secret só no cluster | |
 | ArgoCD admin | senha inicial gerada pelo ArgoCD (Secret no cluster) | |
@@ -332,11 +334,21 @@ Via UI ou `gh api`:
    gh api -X PUT repos/<owner>/vmetrix-devops-challenge/environments/production \
      --input - <<<'{"reviewers":[{"type":"User","id":'"$(gh api user -q .id)"'}]}'
    ```
-3. **Rulesets** em `main` e `develop`: PR obrigatório, status check `ci-result`, bloquear force push/deleção.
-   *Bypass:* GitHub Actions (commits de `deploy/**` feitos pelo CI).
-4. **Primeiro run:** o push da etapa 7.2 dispara o `ci.yml` na `main`. Como é o primeiro push, todos os
+3. **Deploy key do bot GitOps.** O `GITHUB_TOKEN` não pode entrar no bypass de ruleset, então os jobs
+   de deploy fazem checkout com uma deploy key de escrita:
+   ```bash
+   ssh-keygen -t ed25519 -N "" -C gitops-bot -f ./gitops_key
+   gh repo deploy-key add ./gitops_key.pub --allow-write --title gitops-bot
+   gh secret set GITOPS_DEPLOY_KEY --env staging    < ./gitops_key
+   gh secret set GITOPS_DEPLOY_KEY --env production < ./gitops_key
+   rm ./gitops_key ./gitops_key.pub
+   ```
+4. **Ruleset** na `main`: PR obrigatório, status check `ci-result`, bloquear force push/deleção.
+   *Bypass:* somente **Deploy keys** (Settings → Rules → Rulesets → Bypass list → Add bypass → Deploy keys).
+   Commits feitos com a deploy key disparam workflows, mas o `ci.yml` ignora pushes que só alteram `deploy/**`.
+5. **Primeiro run:** o push da etapa 7.2 dispara o `ci.yml` na `main`. Como é o primeiro push, todos os
    módulos rodam, as libs `1.0.0` são publicadas antes dos serviços e o staging recebe a primeira tag.
-5. **Pacotes GHCR:** após o primeiro run, em *Packages → svc-calc → Package settings → Change visibility*
+6. **Pacotes GHCR:** após o primeiro run, em *Packages → svc-calc → Package settings → Change visibility*
    marque **Public** (ou use `GHCR_TOKEN` no passo 7.4).
 
 ### 7.4 Cluster + ArgoCD
