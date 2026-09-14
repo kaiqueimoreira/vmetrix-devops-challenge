@@ -1,8 +1,10 @@
 name: gitops-set-image
 description: >
   Atualiza a tag de imagem de um serviço no overlay Kustomize de um ambiente
-  (deploy/<service>/overlays/<environment>) e faz commit na branch atual.
-  O ArgoCD observa esse diretório — o commit É o deploy.
+  (deploy/<service>/overlays/<environment>) através de um PR para a main:
+  cria a branch, abre o PR, roda o CI (validação dos manifests), espera ficar
+  verde e faz o merge. Nada é enviado direto para a main — o ruleset vale para
+  todos, inclusive para o pipeline. O ArgoCD observa a main: o merge É o deploy.
 
 inputs:
   service:
@@ -15,14 +17,16 @@ inputs:
     description: Tag de imagem já existente no GHCR
     required: true
   reason:
-    description: Texto extra para a mensagem de commit
+    description: Texto extra para a descrição do PR
     required: false
     default: ''
 
 outputs:
   changed:
-    description: true se houve commit
-    value: ${{ steps.commit.outputs.changed }}
+    description: true se um PR de deploy foi mergeado
+    value: ${{ steps.pr.outputs.changed }}
+  pr-url:
+    value: ${{ steps.pr.outputs.url }}
   previous-tag:
     value: ${{ steps.edit.outputs.previous }}
 
@@ -42,40 +46,75 @@ runs:
         yq -i "(.images[] | select(.name == \"${SERVICE}\")).newTag = \"${TAG}\"" "$FILE"
         echo "${FILE}: ${previous} -> ${TAG}"
 
-    - name: Commit e push
-      id: commit
+    - name: PR de deploy (branch -> CI -> merge)
+      id: pr
       shell: bash
       env:
+        GH_TOKEN: ${{ github.token }}
         FILE: deploy/${{ inputs.service }}/overlays/${{ inputs.environment }}/kustomization.yaml
-        MSG: "deploy(${{ inputs.service }}/${{ inputs.environment }}): ${{ steps.edit.outputs.previous }} -> ${{ inputs.tag }}"
+        SERVICE: ${{ inputs.service }}
+        ENVIRONMENT: ${{ inputs.environment }}
+        TAG: ${{ inputs.tag }}
+        PREVIOUS: ${{ steps.edit.outputs.previous }}
         REASON: ${{ inputs.reason }}
       run: |
         if git diff --quiet -- "$FILE"; then
-          echo "Tag já aplicada; nada a commitar."
+          echo "Tag ${TAG} já está em ${ENVIRONMENT}; nada a fazer."
           echo "changed=false" >> "$GITHUB_OUTPUT"
           exit 0
         fi
+
+        prefix="gitops/${SERVICE}-${ENVIRONMENT}-"
+        branch="${prefix}${TAG}"
+        title="deploy(${SERVICE}/${ENVIRONMENT}): ${PREVIOUS} -> ${TAG}"
+        run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+        # PRs de deploy antigos do mesmo serviço/ambiente ficaram obsoletos: fecha para não conflitar.
+        gh pr list --state open --base main --json number,headRefName \
+          -q ".[] | select(.headRefName | startswith(\"${prefix}\")) | select(.headRefName != \"${branch}\") | .number" |
+          while read -r n; do gh pr close "$n" --delete-branch --comment "Substituído por ${branch}."; done
+
         git config user.name  "github-actions[bot]"
         git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git switch -c "$branch"
         git add "$FILE"
-        git commit -m "$MSG" -m "$REASON" -m "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-        branch="${GITHUB_REF_NAME}"
-        # Outros commits podem ter chegado na main durante o pipeline: rebase + retry.
-        # Violação de ruleset (GH013) não se resolve com retry: falha imediatamente.
-        for attempt in 1 2 3 4 5; do
-          if git push origin "HEAD:${branch}" >/tmp/push.log 2>&1; then
-            cat /tmp/push.log
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          cat /tmp/push.log
-          if grep -q 'GH013' /tmp/push.log; then
-            echo "::error::Push bloqueado pelo ruleset da branch ${branch}. O checkout deve usar a deploy key GITOPS_DEPLOY_KEY e ela precisa estar no bypass do ruleset (SOLUTION.md, seção 7.3)."
-            exit 1
-          fi
-          echo "Push rejeitado (tentativa ${attempt}); rebase em origin/${branch}..."
-          sleep $((attempt * 2))
-          git pull --rebase origin "$branch"
+        git commit -m "$title" -m "$REASON" -m "Run: ${run_url}"
+        git push --force origin "$branch"
+
+        body="$(printf '%s\n\n%s\n\n%s\n' \
+          "Deploy automático de **${SERVICE}** em **${ENVIRONMENT}**: \`${PREVIOUS}\` → \`${TAG}\`." \
+          "${REASON}" \
+          "Aberto pelo run ${run_url}. Após o merge o ArgoCD aplica a mudança.")"
+        url="$(gh pr view "$branch" --json url -q .url 2>/dev/null || true)"
+        if [[ -z "$url" ]]; then
+          url="$(gh pr create --base main --head "$branch" --title "$title" --body "$body")"
+        fi
+        echo "url=${url}" >> "$GITHUB_OUTPUT"
+        echo "PR: ${url}"
+
+        # Commits/PRs feitos com GITHUB_TOKEN não disparam workflows; workflow_dispatch é a exceção.
+        head_sha="$(git rev-parse HEAD)"
+        gh workflow run ci.yml --ref "$branch" -f compare-to=main
+        run_id=""
+        for _ in $(seq 1 30); do
+          run_id="$(gh run list --workflow ci.yml --branch "$branch" --event workflow_dispatch \
+            --json databaseId,headSha -q "[.[] | select(.headSha == \"${head_sha}\")][0].databaseId")"
+          [[ -n "$run_id" ]] && break
+          sleep 2
         done
-        echo "::error::Não foi possível publicar o commit de deploy"
-        exit 1
+        if [[ -z "$run_id" ]]; then
+          echo "::error::Run de CI do PR de deploy não foi encontrado."
+          exit 1
+        fi
+        echo "Aguardando CI do PR: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${run_id}"
+        if ! gh run watch "$run_id" --exit-status --interval 10 >/dev/null; then
+          echo "::error::CI do PR de deploy falhou; PR ${url} mantido aberto para análise."
+          exit 1
+        fi
+
+        gh pr merge "$branch" --squash --delete-branch --subject "$title"
+        echo "changed=true" >> "$GITHUB_OUTPUT"
+        {
+          echo "### 🚢 ${title}"
+          echo "PR: ${url}"
+        } >> "$GITHUB_STEP_SUMMARY"

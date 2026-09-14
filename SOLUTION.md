@@ -126,9 +126,9 @@ feature/*  ──PR──►  develop  ──PR (release)──►  main
 | `develop` | integração | idem, a cada push |
 | `main` | produção | publica libs com versão nova, publica imagens, atualiza **staging** via GitOps. **Produção** só via `promote-production` |
 
-Proteção (rulesets) em `main` e `develop`: PR obrigatório, check `ci-result` obrigatório, sem force push
-e sem deleção. A única exceção é a deploy key `gitops-bot`, usada pelos jobs de deploy para gravar a tag
-no overlay (ver seção 7.3).
+Proteção (ruleset) na `main`: PR obrigatório, sem force push e sem deleção, **sem exceções, nem para o
+pipeline**. Até o deploy é um PR: o CI abre `gitops/<serviço>-<ambiente>-<tag>`, valida os manifests e
+faz o merge (seção 4).
 
 ### Versionamento
 
@@ -242,19 +242,24 @@ repositório de origem, os namespaces `svc-calc-*` e os tipos de recurso permiti
 ### Fluxo de deploy
 
 1. Merge na `main` com mudança em `svc-calc` → imagem `1.0.0-abc1234` no GHCR.
-2. CI faz commit `deploy(svc-calc/staging): <anterior> -> 1.0.0-abc1234` → ArgoCD sincroniza staging.
+2. Job `deploy staging` abre o PR `deploy(svc-calc/staging): <anterior> -> 1.0.0-abc1234`, dispara o CI
+   nele (kustomize + kubeconform), espera ficar verde e faz o merge → ArgoCD sincroniza staging.
 3. **Actions → promote-production → Run workflow** (tag vazia = a de staging).
-4. Revisor aprova no Environment `production` → commit `deploy(svc-calc/production): ...`.
+4. Revisor aprova no Environment `production` → mesmo fluxo de PR para `deploy(svc-calc/production): ...`.
 5. `svc-calc-production` fica **OutOfSync** → `argocd app sync svc-calc-production` (ou botão Sync na UI).
+
+**Por que PR e não commit direto:** a `main` exige PR para todos. O deploy ganha validação dos manifests
+antes de chegar ao ArgoCD e trilha de auditoria (PR com link do run que construiu a imagem). Deploys
+obsoletos do mesmo serviço/ambiente são fechados automaticamente para não conflitarem.
 
 ### Rollback (sem novo build)
 
 | Situação | Como |
 |---|---|
 | Padrão (fica registrado no Git) | Actions → **promote-production** → `tag=<tag anterior>` → aprovar → Sync. A tag anterior está no `git log -p deploy/svc-calc/overlays/production` e no resumo do run anterior |
-| Alternativa via Git | `git revert <commit deploy(svc-calc/production)>` via PR → Sync |
+| Alternativa via Git | Botão *Revert* no PR `deploy(svc-calc/production)` → merge → Sync |
 | Emergência (CI indisponível) | `argocd app history svc-calc-production` → `argocd app rollback svc-calc-production <ID>`. Depois, alinhar o Git com uma das opções acima, senão o próximo Sync reaplica a versão ruim |
-| Staging | `git revert` do commit de deploy de staging (auto-sync aplica) |
+| Staging | *Revert* do PR de deploy de staging na UI do GitHub (gera outro PR; auto-sync aplica) |
 
 ---
 
@@ -281,14 +286,13 @@ repositório de origem, os namespaces `svc-calc-*` e os tipos de recurso permiti
 |---|---|---|
 | Maven no CI (ler/publicar libs) | `GITHUB_TOKEN` | Efêmero por run; `maven-settings.xml` lê `${env.GITHUB_TOKEN}`; `packages: write` só nos jobs que precisam |
 | GHCR (push) | `GITHUB_TOKEN` | `docker/login-action`, só quando `push: true` |
-| Commit GitOps na `main` | Deploy key `gitops-bot` (escrita), secret `GITOPS_DEPLOY_KEY` | Secret **de Environment** (`staging` e `production`): só jobs desses ambientes a recebem, e o de produção só após aprovação. É o único ator no bypass do ruleset da `main` |
-| PR de bump | `GITHUB_TOKEN` | `contents: write` / `pull-requests: write` só nesse job |
+| PRs de deploy (GitOps) e de bump | `GITHUB_TOKEN` | `contents` / `pull-requests` / `actions: write` só nesses jobs. Nenhuma credencial com bypass do ruleset existe |
 | Permissões default | `contents: read` | Top-level do `ci.yml`, elevadas por job (least privilege) |
 | Pull de imagem no kind | nenhuma se os pacotes GHCR forem públicos; senão `GHCR_USER`/`GHCR_TOKEN` (PAT `read:packages`) em variável de ambiente do `bootstrap-cluster.sh`, virando Secret só no cluster | |
 | ArgoCD admin | senha inicial gerada pelo ArgoCD (Secret no cluster) | |
 | Dev local lendo libs do GitHub Packages | PAT `read:packages` em `~/.m2/settings.xml` do próprio dev | |
 
-Outras medidas: imagem não-root com rootfs read-only, `concurrency` para não intercalar commits de deploy,
+Outras medidas: imagem não-root com rootfs read-only, `concurrency` para não intercalar PRs de deploy,
 aprovação obrigatória no Environment `production`, AppProject limitando o raio de ação do ArgoCD.
 
 ---
@@ -334,21 +338,13 @@ Via UI ou `gh api`:
    gh api -X PUT repos/<owner>/vmetrix-devops-challenge/environments/production \
      --input - <<<'{"reviewers":[{"type":"User","id":'"$(gh api user -q .id)"'}]}'
    ```
-3. **Deploy key do bot GitOps.** O `GITHUB_TOKEN` não pode entrar no bypass de ruleset, então os jobs
-   de deploy fazem checkout com uma deploy key de escrita:
-   ```bash
-   ssh-keygen -t ed25519 -N "" -C gitops-bot -f ./gitops_key
-   gh repo deploy-key add ./gitops_key.pub --allow-write --title gitops-bot
-   gh secret set GITOPS_DEPLOY_KEY --env staging    < ./gitops_key
-   gh secret set GITOPS_DEPLOY_KEY --env production < ./gitops_key
-   rm ./gitops_key ./gitops_key.pub
-   ```
-4. **Ruleset** na `main`: PR obrigatório, status check `ci-result`, bloquear force push/deleção.
-   *Bypass:* somente **Deploy keys** (Settings → Rules → Rulesets → Bypass list → Add bypass → Deploy keys).
-   Commits feitos com a deploy key disparam workflows, mas o `ci.yml` ignora pushes que só alteram `deploy/**`.
-5. **Primeiro run:** o push da etapa 7.2 dispara o `ci.yml` na `main`. Como é o primeiro push, todos os
+3. **Ruleset** na `main` (configure **depois** do primeiro run da etapa 4): PR obrigatório, status check
+   `ci-result`, bloquear force push/deleção, **lista de bypass vazia**. Os jobs de deploy funcionam com
+   isso porque abrem PR, rodam o CI e mergeiam; nenhum push vai direto para a `main`.
+   Se exigir aprovações (> 0) no ruleset, os PRs de deploy passam a esperar um revisor humano.
+4. **Primeiro run:** o push da etapa 7.2 dispara o `ci.yml` na `main`. Como é o primeiro push, todos os
    módulos rodam, as libs `1.0.0` são publicadas antes dos serviços e o staging recebe a primeira tag.
-6. **Pacotes GHCR:** após o primeiro run, em *Packages → svc-calc → Package settings → Change visibility*
+5. **Pacotes GHCR:** após o primeiro run, em *Packages → svc-calc → Package settings → Change visibility*
    marque **Public** (ou use `GHCR_TOKEN` no passo 7.4).
 
 ### 7.4 Cluster + ArgoCD
@@ -417,7 +413,7 @@ curl -s -X POST localhost:8082/api/statistics/summary -H 'Content-Type: applicat
 ### Push direto na `main` saltando o pipeline
 
 - **Prevenir:** ruleset em `main` com PR obrigatório, `ci-result` obrigatório, sem force push,
-  *Do not allow bypassing* para humanos (incluindo admins), bypass só para o bot e só para `deploy/**`.
+  lista de bypass vazia (nem admins, nem o pipeline: até o deploy entra por PR).
   Opcional: *Require signed commits* e CODEOWNERS com review de `.github/` e `deploy/`.
 - **Detectar:** audit log do repo/org e alerta para eventos `protected_branch.policy_override`.
 - **Mitigar:** mesmo com push direto, o `ci.yml` roda no push e nada chega à produção sem o
@@ -440,7 +436,7 @@ e cada imagem carrega no label a versão exata das libs.
 4. **Supply chain**: SBOM (Syft), scan de vulnerabilidades (Trivy) bloqueante para CRITICAL,
    assinatura de imagens com cosign keyless e política de verificação no cluster (Kyverno).
 5. **GitHub App** no lugar do `GITHUB_TOKEN` para commits de deploy e PRs de bump: dispara workflows
-   nativamente, sem `workflow_dispatch`, e dá um bypass de ruleset mais granular.
+   nativamente (sem `workflow_dispatch`) e permite exigir aprovação de um revisor humano nos PRs de deploy de produção.
 6. **Argo Rollouts** (canary com análise de métricas) e **ArgoCD Notifications** (Slack no sync/degraded).
 7. **Observabilidade**: Prometheus scraping do Actuator, dashboards e alertas de SLO.
 8. **Renovate** para dependências externas (Spring Boot, actions, imagens base) com pin por digest.

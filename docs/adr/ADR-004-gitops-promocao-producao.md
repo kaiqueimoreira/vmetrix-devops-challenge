@@ -16,7 +16,7 @@ aprovação explícita para produção e rollback sem novo build.
 |---|---|
 | ArgoCD Image Updater | Mais um controller no cluster com credencial de escrita no Git; o "quem aprovou" fica fora do Git/Actions |
 | Tag `latest` / tag mutável + `imagePullPolicy: Always` | Proibido pelo desafio e não rastreável; rollback impossível |
-| **CI faz commit da tag imutável no overlay** (`kustomization.yaml → images.newTag`) | ✅ Simples, auditável (`git log deploy/`), roda com o `GITHUB_TOKEN` do run |
+| **CI abre PR com a tag imutável no overlay** (`kustomization.yaml → images.newTag`), valida e mergeia | ✅ Simples, auditável (PR + `git log deploy/`), roda com o `GITHUB_TOKEN` do run, respeita a proteção da `main` |
 
 **Como aprovar produção**
 
@@ -37,7 +37,7 @@ aprovação explícita para produção e rollback sem novo build.
     `production-deployer` do AppProject executar Sync.
 - **Rollback sem build**, três caminhos, do mais recomendado ao emergencial:
   1. `promote-production` com `tag=<tag anterior>`, que deixa rastro no Git;
-  2. `git revert` do commit `deploy(svc-calc/production): ...`;
+  2. *Revert* do PR `deploy(svc-calc/production): ...`;
   3. `argocd app rollback svc-calc-production <history-id>`. Só é possível porque produção não
      tem auto-sync; depois é preciso alinhar o Git com (1) ou (2).
 - Imagens nunca são sobrescritas: tag = `<versão-pom>-<sha7>` e também `sha-<sha completo>`.
@@ -46,13 +46,13 @@ aprovação explícita para produção e rollback sem novo build.
 
 - (+) Git é a fonte da verdade do que roda em cada ambiente; `git log` responde "quem, quando, o quê".
 - (+) Rollback em segundos, sem depender do CI estar saudável (opção 3).
-- (−) O bot faz push direto na `main` (só em `deploy/**`), furando o "PR obrigatório". Como o
-  `GITHUB_TOKEN` não pode entrar no bypass de ruleset, o push usa uma **deploy key** de escrita, que é
-  o único ator no bypass. A chave fica como secret dos Environments `staging`/`production` (a de
-  produção só é entregue ao job após a aprovação). Risco residual: a chave permite escrever em qualquer
-  caminho da `main`. Mitigações futuras: GitHub App com permissão mínima, ou mover os overlays para um
-  repositório de configuração separado. A alternativa sem bypass (PR de deploy com auto-merge) foi
-  descartada por adicionar um ciclo de CI a cada deploy de staging.
+- (−) A `main` exige PR para todos, sem bypass. Por isso o CI não faz commit direto: abre um PR de
+  deploy (`gitops/<serviço>-<ambiente>-<tag>`), dispara o CI nele via `workflow_dispatch` (ações do
+  `GITHUB_TOKEN` não disparam workflows), espera a validação dos manifests e faz o merge. Custo: ~1–2 min
+  a mais por deploy e um PR por deploy no histórico. Ganho: nenhuma credencial com bypass, manifests
+  validados antes do ArgoCD e trilha de auditoria. Alternativas descartadas: deploy key no bypass do
+  ruleset (credencial capaz de escrever qualquer coisa na `main`) e ArgoCD Image Updater (mais um
+  controller com escrita no Git).
 - (−) Gate duplo pode parecer redundante. Ele separa **aprovação de conteúdo** (auditada no
   GitHub) de **janela de execução** (operador no ArgoCD). Se o time preferir, basta ligar o
   auto-sync em produção e manter só o Gate 1.
