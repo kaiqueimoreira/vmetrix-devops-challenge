@@ -1,0 +1,27 @@
+# PRODUCTION: SEM auto-sync (manual gate).
+# O ArgoCD detecta o novo commit e mostra OutOfSync; o deploy só acontece quando
+# alguém com permissão executa Sync. Sem auto-sync, `argocd app rollback` também
+# fica disponível (rollback para uma revisão anterior sem novo build).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: svc-calc-production
+  namespace: argocd
+  labels:
+    app.kubernetes.io/name: svc-calc
+    vmetrix/environment: production
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: vmetrix
+  source:
+    repoURL: https://github.com/kaiqueimoreira/vmetrix-devops-challenge.git
+    targetRevision: main
+    path: deploy/svc-calc/overlays/production
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: svc-calc-production
+  revisionHistoryLimit: 10
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true

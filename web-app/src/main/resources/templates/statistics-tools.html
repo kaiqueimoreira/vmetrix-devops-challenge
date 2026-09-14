@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head><meta charset="UTF-8"/><title>Statistics · VMETRIX</title>
+<style>
+* { box-sizing:border-box; margin:0; padding:0; }
+body { font-family:'Segoe UI',sans-serif; background:#f5f7fa; color:#222; }
+header { background:#1a1a2e; color:#fff; padding:1rem 2rem; }
+header h1 { font-size:1.4rem; }
+nav { background:#16213e; padding:0.5rem 2rem; display:flex; gap:1.5rem; }
+nav a { color:#aac4ff; text-decoration:none; font-size:0.9rem; }
+nav a:hover { color:#fff; }
+main { max-width:760px; margin:2rem auto; padding:0 1rem; }
+.card { background:#fff; border-radius:8px; padding:1.5rem; box-shadow:0 1px 4px rgba(0,0,0,.08); margin-bottom:1rem; }
+.card h2 { font-size:1rem; color:#1a1a2e; margin-bottom:1rem; }
+input[type=text] { width:100%; padding:0.5rem; border:1px solid #ccc; border-radius:4px; font-size:0.9rem; margin-bottom:0.8rem; }
+button { background:#1a1a2e; color:#fff; border:none; padding:0.45rem 1.2rem; border-radius:4px; cursor:pointer; }
+.result-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:0.8rem; margin-top:1rem; }
+.stat-box { background:#eef2ff; border-radius:6px; padding:0.8rem; text-align:center; }
+.stat-box .label { font-size:0.75rem; color:#555; margin-bottom:0.3rem; }
+.stat-box .value { font-size:1.1rem; font-weight:700; color:#1a1a2e; }
+</style></head>
+<body>
+<header><h1>VMETRIX Portal</h1></header>
+<nav>
+    <a href="/">Home</a><a href="/tools/string">String Tools</a>
+    <a href="/tools/validation">Validation</a><a href="/tools/financial">Financial</a>
+    <a href="/tools/statistics">Statistics</a>
+</nav>
+<main>
+    <div class="card">
+        <h2>Statistical Summary</h2>
+        <form method="post" action="/tools/statistics/summary">
+            <input type="text" name="values" placeholder="Enter comma-separated numbers: 2, 4, 4, 5, 7, 9" required/>
+            <button type="submit">Calculate</button>
+        </form>
+        <div class="result-grid" th:if="${mean}">
+            <div class="stat-box"><div class="label">Mean</div><div class="value" th:text="${mean}"></div></div>
+            <div class="stat-box"><div class="label">Median</div><div class="value" th:text="${median}"></div></div>
+            <div class="stat-box"><div class="label">Std Dev</div><div class="value" th:text="${stdDev}"></div></div>
+            <div class="stat-box"><div class="label">Min</div><div class="value" th:text="${min}"></div></div>
+            <div class="stat-box"><div class="label">Max</div><div class="value" th:text="${max}"></div></div>
+            <div class="stat-box"><div class="label">Sum</div><div class="value" th:text="${sum}"></div></div>
+        </div>
+    </div>
+</main>
+</body></html>

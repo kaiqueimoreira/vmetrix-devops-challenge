@@ -1,0 +1,74 @@
+name: gitops-set-image
+description: >
+  Atualiza a tag de imagem de um serviço no overlay Kustomize de um ambiente
+  (deploy/<service>/overlays/<environment>) e faz commit na branch atual.
+  O ArgoCD observa esse diretório — o commit É o deploy.
+
+inputs:
+  service:
+    description: Nome do serviço (diretório em deploy/)
+    required: true
+  environment:
+    description: staging | production
+    required: true
+  tag:
+    description: Tag de imagem já existente no GHCR
+    required: true
+  reason:
+    description: Texto extra para a mensagem de commit
+    required: false
+    default: ''
+
+outputs:
+  changed:
+    description: true se houve commit
+    value: ${{ steps.commit.outputs.changed }}
+  previous-tag:
+    value: ${{ steps.edit.outputs.previous }}
+
+runs:
+  using: composite
+  steps:
+    - name: Atualizar kustomization
+      id: edit
+      shell: bash
+      env:
+        FILE: deploy/${{ inputs.service }}/overlays/${{ inputs.environment }}/kustomization.yaml
+        SERVICE: ${{ inputs.service }}
+        TAG: ${{ inputs.tag }}
+      run: |
+        previous="$(yq ".images[] | select(.name == \"${SERVICE}\") | .newTag" "$FILE")"
+        echo "previous=${previous}" >> "$GITHUB_OUTPUT"
+        yq -i "(.images[] | select(.name == \"${SERVICE}\")).newTag = \"${TAG}\"" "$FILE"
+        echo "${FILE}: ${previous} -> ${TAG}"
+
+    - name: Commit e push
+      id: commit
+      shell: bash
+      env:
+        FILE: deploy/${{ inputs.service }}/overlays/${{ inputs.environment }}/kustomization.yaml
+        MSG: "deploy(${{ inputs.service }}/${{ inputs.environment }}): ${{ steps.edit.outputs.previous }} -> ${{ inputs.tag }}"
+        REASON: ${{ inputs.reason }}
+      run: |
+        if git diff --quiet -- "$FILE"; then
+          echo "Tag já aplicada; nada a commitar."
+          echo "changed=false" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        git config user.name  "github-actions[bot]"
+        git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+        git add "$FILE"
+        git commit -m "$MSG" -m "$REASON" -m "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+        branch="${GITHUB_REF_NAME}"
+        # Outros commits podem ter chegado na main durante o pipeline: rebase + retry.
+        for attempt in 1 2 3 4 5; do
+          if git push origin "HEAD:${branch}"; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Push rejeitado (tentativa ${attempt}); rebase em origin/${branch}..."
+          sleep $((attempt * 2))
+          git pull --rebase origin "$branch"
+        done
+        echo "::error::Não foi possível publicar o commit de deploy"
+        exit 1

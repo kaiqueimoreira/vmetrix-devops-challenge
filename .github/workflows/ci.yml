@@ -1,0 +1,237 @@
+# Orquestrador do monorepo.
+#
+# O grafo de dependências entre módulos é expresso com `needs:`, então a ordem
+# de build é garantida pelo próprio GitHub Actions:
+#
+#   changes ─┬─ calc-lib ───┬─ svc-calc ── deploy-staging-svc-calc
+#            │              ├─ web-app
+#            ├─ misc-utils ─┼─ svc-misc
+#            │              └─ (web-app)
+#            └─ manifests
+#   calc-lib/misc-utils (nova versão na main) ── bump-* (PR nos consumidores)
+#   todos ── ci-result (check obrigatório para merge)
+#
+# PR / develop : valida (compile, testes, docker build, smoke test). Nada é publicado.
+# main         : publica libs (GitHub Packages), imagens (GHCR) e atualiza staging via GitOps.
+name: ci
+
+on:
+  push:
+    branches: [main, develop]
+    # Commits de deploy (deploy/**) e docs não reconstroem nada.
+    paths-ignore: ['deploy/**', '**/*.md', 'docs/**']
+  pull_request:
+    branches: [main, develop]
+    # Sem paths-ignore em PR: o check obrigatório `ci-result` precisa sempre reportar.
+  workflow_dispatch:
+    inputs:
+      compare-to:
+        description: Branch base para detectar mudanças (vazio = rodar todos os módulos)
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  # Em PR cancela execuções antigas; em main/develop nunca interrompe uma publicação.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    name: detect changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      calc-lib: ${{ steps.detect.outputs.calc-lib }}
+      calc-lib-src: ${{ steps.detect.outputs.calc-lib-src }}
+      misc-utils: ${{ steps.detect.outputs.misc-utils }}
+      misc-utils-src: ${{ steps.detect.outputs.misc-utils-src }}
+      svc-calc: ${{ steps.detect.outputs.svc-calc }}
+      svc-misc: ${{ steps.detect.outputs.svc-misc }}
+      web-app: ${{ steps.detect.outputs.web-app }}
+      deploy: ${{ steps.detect.outputs.deploy }}
+      is-main: ${{ github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detectar módulos alterados
+        id: detect
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          COMPARE_TO: ${{ inputs.compare-to }}
+        run: |
+          case "$EVENT" in
+            pull_request) base="$PR_BASE" ;;
+            push)         base="$PUSH_BEFORE" ;;
+            workflow_dispatch)
+              base=""
+              if [[ -n "$COMPARE_TO" ]]; then
+                git fetch --no-tags origin "$COMPARE_TO"
+                base="$(git merge-base "origin/${COMPARE_TO}" HEAD)"
+              fi ;;
+          esac
+          ci/detect-changes.sh "$base" HEAD
+
+  # ─── Bibliotecas ─────────────────────────────────────────────────────────────
+  calc-lib:
+    needs: changes
+    if: needs.changes.outputs.calc-lib == 'true'
+    permissions:
+      contents: write   # tag git da versão
+      packages: write   # mvn deploy
+    uses: ./.github/workflows/_lib.yml
+    with:
+      module: calc-lib
+      src-changed: ${{ needs.changes.outputs.calc-lib-src == 'true' }}
+      publish: ${{ needs.changes.outputs.is-main == 'true' }}
+
+  misc-utils:
+    needs: changes
+    if: needs.changes.outputs.misc-utils == 'true'
+    permissions:
+      contents: write
+      packages: write
+    uses: ./.github/workflows/_lib.yml
+    with:
+      module: misc-utils
+      src-changed: ${{ needs.changes.outputs.misc-utils-src == 'true' }}
+      publish: ${{ needs.changes.outputs.is-main == 'true' }}
+
+  # ─── Serviços (esperam as bibliotecas das quais dependem) ─────────────────────
+  # `!failure() && !cancelled()`: roda se a lib passou OU foi pulada (não mudou),
+  # mas nunca se a lib falhou.
+  svc-calc:
+    needs: [changes, calc-lib]
+    if: ${{ !failure() && !cancelled() && needs.changes.outputs.svc-calc == 'true' }}
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/_service.yml
+    with:
+      module: svc-calc
+      port: 8082
+      push: ${{ needs.changes.outputs.is-main == 'true' }}
+
+  svc-misc:
+    needs: [changes, misc-utils]
+    if: ${{ !failure() && !cancelled() && needs.changes.outputs.svc-misc == 'true' }}
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/_service.yml
+    with:
+      module: svc-misc
+      port: 8081
+      push: ${{ needs.changes.outputs.is-main == 'true' }}
+
+  web-app:
+    needs: [changes, calc-lib, misc-utils]
+    if: ${{ !failure() && !cancelled() && needs.changes.outputs.web-app == 'true' }}
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/_service.yml
+    with:
+      module: web-app
+      port: 8080
+      push: ${{ needs.changes.outputs.is-main == 'true' }}
+
+  # ─── Propagação de nova versão de biblioteca ──────────────────────────────────
+  bump-calc-lib:
+    needs: calc-lib
+    if: needs.calc-lib.outputs.published == 'true'
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    uses: ./.github/workflows/_bump-consumers.yml
+    with:
+      library: calc-lib
+      version: ${{ needs.calc-lib.outputs.version }}
+
+  bump-misc-utils:
+    needs: misc-utils
+    if: needs.misc-utils.outputs.published == 'true'
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    uses: ./.github/workflows/_bump-consumers.yml
+    with:
+      library: misc-utils
+      version: ${{ needs.misc-utils.outputs.version }}
+
+  # ─── Manifests Kubernetes ─────────────────────────────────────────────────────
+  manifests:
+    name: validate manifests
+    needs: changes
+    if: needs.changes.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: kustomize build + kubeconform
+        env:
+          KUBECONFORM_VERSION: v0.6.7
+        run: |
+          curl -sSL "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" | tar xz -C /usr/local/bin kubeconform
+          for overlay in deploy/*/overlays/*/; do
+            echo "::group::${overlay}"
+            kubectl kustomize "$overlay" | kubeconform -strict -summary -kubernetes-version 1.30.0 -
+            echo "::endgroup::"
+          done
+          # Applications/AppProject do ArgoCD (CRDs): valida via schemas do catálogo de CRDs.
+          kubeconform -strict -summary \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            deploy/argocd/
+
+  # ─── GitOps: staging recebe automaticamente toda imagem nova da main ─────────
+  deploy-staging-svc-calc:
+    name: deploy staging (svc-calc)
+    needs: [changes, svc-calc]
+    if: ${{ !failure() && !cancelled() && needs.svc-calc.result == 'success' && needs.changes.outputs.is-main == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    concurrency:
+      group: gitops
+      cancel-in-progress: false
+    environment:
+      name: staging
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: ./.github/actions/gitops-set-image
+        with:
+          service: svc-calc
+          environment: staging
+          tag: ${{ needs.svc-calc.outputs.tag }}
+          reason: "Imagem ${{ needs.svc-calc.outputs.image }}:${{ needs.svc-calc.outputs.tag }} construída do commit ${{ github.sha }}."
+
+  # ─── Check único exigido pela proteção de branch ──────────────────────────────
+  ci-result:
+    name: ci-result
+    if: always()
+    needs: [changes, calc-lib, misc-utils, svc-calc, svc-misc, web-app, manifests, bump-calc-lib, bump-misc-utils, deploy-staging-svc-calc]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Avaliar resultado dos jobs
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "$RESULTS"
+          if jq -e 'any(.[]; . == "failure" or . == "cancelled")' <<<"$RESULTS" >/dev/null; then
+            echo "::error::Um ou mais jobs falharam."
+            exit 1
+          fi
+          echo "Todos os jobs passaram ou foram pulados por não haver mudança."

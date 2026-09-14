@@ -1,0 +1,109 @@
+# Promoção (e rollback) para PRODUÇÃO sem novo build.
+#
+# - Sem `tag`: promove a imagem que está rodando em staging.
+# - Com `tag`: implanta uma tag específica já existente no GHCR (ex.: a anterior => rollback).
+#
+# Gate 1: o job usa o GitHub Environment `production`, que exige aprovação de um revisor.
+# Gate 2: a Application de produção no ArgoCD não tem auto-sync; alguém faz o Sync.
+name: promote-production
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: Serviço
+        type: choice
+        options: [svc-calc]
+        default: svc-calc
+      tag:
+        description: Tag da imagem (vazio = a mesma de staging). Use a tag anterior para rollback.
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gitops
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: resolve image
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      current: ${{ steps.tag.outputs.current }}
+    steps:
+      - name: Somente a partir da main
+        if: github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Promoção deve ser disparada a partir da main (atual: ${GITHUB_REF})"
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - name: Determinar tag
+        id: tag
+        env:
+          SERVICE: ${{ inputs.service }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          q=".images[] | select(.name == \"${SERVICE}\") | .newTag"
+          staging="$(yq "$q" "deploy/${SERVICE}/overlays/staging/kustomization.yaml")"
+          current="$(yq "$q" "deploy/${SERVICE}/overlays/production/kustomization.yaml")"
+          tag="${INPUT_TAG:-$staging}"
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "current=${current}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### 🚀 Promoção ${SERVICE}"
+            echo "| staging | produção atual | produção desejada |"
+            echo "|---|---|---|"
+            echo "| \`${staging}\` | \`${current}\` | \`${tag}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Login no GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Verificar que a imagem existe (nenhum build acontece aqui)
+        env:
+          SERVICE: ${{ inputs.service }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          owner="$(tr '[:upper:]' '[:lower:]' <<<"${GITHUB_REPOSITORY_OWNER}")"
+          docker buildx imagetools inspect "ghcr.io/${owner}/${SERVICE}:${TAG}"
+
+  promote:
+    name: promote to production
+    needs: resolve
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    environment:
+      name: production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: ./.github/actions/gitops-set-image
+        with:
+          service: ${{ inputs.service }}
+          environment: production
+          tag: ${{ needs.resolve.outputs.tag }}
+          reason: "Promovido por @${{ github.actor }} (anterior: ${{ needs.resolve.outputs.current }})."
+      - name: Próximo passo
+        run: |
+          {
+            echo "Commit de produção publicado. A Application \`${{ inputs.service }}-production\` ficará **OutOfSync**."
+            echo ""
+            echo "Sincronize no ArgoCD (UI ou \`argocd app sync ${{ inputs.service }}-production\`)."
+          } >> "$GITHUB_STEP_SUMMARY"

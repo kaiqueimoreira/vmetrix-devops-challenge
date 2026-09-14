@@ -1,0 +1,31 @@
+# Limita o que as Applications do vmetrix podem fazer: só este repositório,
+# só os namespaces svc-calc-*, e nenhum recurso de escopo de cluster além de Namespace.
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: vmetrix
+  namespace: argocd
+spec:
+  description: Serviços VMETRIX
+  sourceRepos:
+    - https://github.com/kaiqueimoreira/vmetrix-devops-challenge.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: svc-calc-*
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: apps
+      kind: Deployment
+    - group: ""
+      kind: Service
+    - group: policy
+      kind: PodDisruptionBudget
+  roles:
+    - name: production-deployer
+      description: Pode sincronizar e fazer rollback em produção
+      policies:
+        - p, proj:vmetrix:production-deployer, applications, get, vmetrix/*, allow
+        - p, proj:vmetrix:production-deployer, applications, sync, vmetrix/svc-calc-production, allow
+        - p, proj:vmetrix:production-deployer, applications, action/*, vmetrix/svc-calc-production, allow

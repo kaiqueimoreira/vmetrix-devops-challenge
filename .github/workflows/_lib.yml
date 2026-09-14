@@ -1,0 +1,109 @@
+# Pipeline reutilizável de BIBLIOTECA (calc-lib, misc-utils).
+# compile -> test -> package -> artifact -> (main) publish no GitHub Packages + tag git
+name: _lib
+
+on:
+  workflow_call:
+    inputs:
+      module:
+        description: Diretório/artifactId da biblioteca
+        type: string
+        required: true
+      src-changed:
+        description: O código da biblioteca mudou neste push/PR (ativa o gate de bump de versão)
+        type: boolean
+        required: true
+      publish:
+        description: Publicar no GitHub Packages (somente main)
+        type: boolean
+        default: false
+    outputs:
+      version:
+        value: ${{ jobs.build.outputs.version }}
+      published:
+        description: true se uma NOVA versão foi publicada nesta execução
+        value: ${{ jobs.build.outputs.published }}
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      MVN: mvn -B -ntp -s ${{ github.workspace }}/.github/maven-settings.xml
+    outputs:
+      version: ${{ steps.gate.outputs.version }}
+      published: ${{ steps.publish.outcome == 'success' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+          cache-dependency-path: ${{ inputs.module }}/pom.xml
+
+      - name: Gate de versão (versões publicadas são imutáveis)
+        id: gate
+        run: ci/lib-version-gate.sh "${{ inputs.module }}" "${{ inputs.src-changed }}"
+
+      - name: mvn compile
+        working-directory: ${{ inputs.module }}
+        run: $MVN compile
+
+      - name: mvn test
+        working-directory: ${{ inputs.module }}
+        run: $MVN test
+
+      - name: Relatório de testes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-${{ inputs.module }}
+          path: ${{ inputs.module }}/target/surefire-reports/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # Os testes já rodaram no passo anterior; -DskipTests evita executá-los duas vezes.
+      - name: mvn package
+        working-directory: ${{ inputs.module }}
+        run: $MVN package -DskipTests
+
+      # JAR + pom disponíveis para os jobs de serviço DESTA execução (ver ci/install-run-libs.sh).
+      - name: Upload do JAR como artifact do pipeline
+        uses: actions/upload-artifact@v4
+        with:
+          name: lib-${{ inputs.module }}
+          path: |
+            ${{ inputs.module }}/pom.xml
+            ${{ inputs.module }}/target/${{ inputs.module }}-${{ steps.gate.outputs.version }}.jar
+            ${{ inputs.module }}/target/${{ inputs.module }}-${{ steps.gate.outputs.version }}-sources.jar
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publicar no GitHub Packages
+        id: publish
+        if: inputs.publish && steps.gate.outputs.publish == 'true'
+        working-directory: ${{ inputs.module }}
+        run: |
+          $MVN deploy -DskipTests \
+            -DaltDeploymentRepository=github::https://maven.pkg.github.com/${{ github.repository }}
+
+      - name: Tag git da versão publicada
+        if: steps.publish.outcome == 'success'
+        run: |
+          tag="${{ inputs.module }}-v${{ steps.gate.outputs.version }}"
+          git tag "$tag" "$GITHUB_SHA"
+          git push origin "refs/tags/$tag"
+
+      - name: Resumo
+        if: always()
+        run: |
+          {
+            echo "### 📦 ${{ inputs.module }} ${{ steps.gate.outputs.version }}"
+            echo "| código alterado | já publicada | publicada agora |"
+            echo "|---|---|---|"
+            echo "| ${{ inputs.src-changed }} | ${{ steps.gate.outputs.exists }} | ${{ steps.publish.outcome == 'success' }} |"
+          } >> "$GITHUB_STEP_SUMMARY"

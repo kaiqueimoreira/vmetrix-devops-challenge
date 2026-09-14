@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head><meta charset="UTF-8"/><title>Validation · VMETRIX</title>
+<style>
+* { box-sizing:border-box; margin:0; padding:0; }
+body { font-family:'Segoe UI',sans-serif; background:#f5f7fa; color:#222; }
+header { background:#1a1a2e; color:#fff; padding:1rem 2rem; }
+header h1 { font-size:1.4rem; }
+nav { background:#16213e; padding:0.5rem 2rem; display:flex; gap:1.5rem; }
+nav a { color:#aac4ff; text-decoration:none; font-size:0.9rem; }
+nav a:hover { color:#fff; }
+main { max-width:760px; margin:2rem auto; padding:0 1rem; }
+.card { background:#fff; border-radius:8px; padding:1.5rem; box-shadow:0 1px 4px rgba(0,0,0,.08); margin-bottom:1rem; }
+.card h2 { font-size:1rem; color:#1a1a2e; margin-bottom:1rem; }
+input[type=text] { width:100%; padding:0.5rem; border:1px solid #ccc; border-radius:4px; font-size:0.9rem; margin-bottom:0.8rem; }
+button { background:#1a1a2e; color:#fff; border:none; padding:0.45rem 1.2rem; border-radius:4px; cursor:pointer; }
+.result { margin-top:1rem; background:#eef2ff; border-left:4px solid #1a1a2e; padding:0.8rem 1rem; border-radius:0 4px 4px 0; }
+</style></head>
+<body>
+<header><h1>VMETRIX Portal</h1></header>
+<nav>
+    <a href="/">Home</a><a href="/tools/string">String Tools</a>
+    <a href="/tools/validation">Validation</a><a href="/tools/financial">Financial</a>
+    <a href="/tools/statistics">Statistics</a>
+</nav>
+<main>
+    <div class="card">
+        <h2>Email Validation</h2>
+        <form method="post" action="/tools/validation/email">
+            <input type="text" name="email" placeholder="user@example.com" required/>
+            <button type="submit">Validate</button>
+        </form>
+    </div>
+    <div class="card">
+        <h2>CPF Validation</h2>
+        <form method="post" action="/tools/validation/cpf">
+            <input type="text" name="cpf" placeholder="529.982.247-25" required/>
+            <button type="submit">Validate</button>
+        </form>
+    </div>
+    <div class="result" th:if="${result}">
+        <strong th:text="${operation}"></strong>:
+        <span th:text="${result}"></span>
+    </div>
+</main>
+</body></html>

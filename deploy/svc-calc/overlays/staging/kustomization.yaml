@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: svc-calc-staging
+resources:
+  - ../../base
+labels:
+  - pairs:
+      app.kubernetes.io/environment: staging
+    includeSelectors: false
+    includeTemplates: true
+patches:
+  - path: deployment-patch.yaml
+# newTag é atualizado automaticamente pelo job "deploy staging" do CI a cada build da main.
+images:
+  - name: svc-calc
+    newName: ghcr.io/kaiqueimoreira/svc-calc
+    newTag: 1.0.0-bootstrap

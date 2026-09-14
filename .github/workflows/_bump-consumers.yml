@@ -1,0 +1,72 @@
+# Após publicar uma NOVA versão de biblioteca, abre PR na develop atualizando
+# todos os consumidores e dispara o CI nesse PR. Os consumidores só chegam à
+# main (e portanto à produção) depois de compilar e passar nos testes contra a
+# nova versão.
+name: _bump-consumers
+
+on:
+  workflow_call:
+    inputs:
+      library:
+        type: string
+        required: true
+      version:
+        type: string
+        required: true
+      base-branch:
+        type: string
+        default: develop
+
+jobs:
+  pr:
+    name: open PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      LIB: ${{ inputs.library }}
+      VERSION: ${{ inputs.version }}
+      BASE: ${{ inputs.base-branch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.base-branch }}
+
+      - name: Atualizar <${{ inputs.library }}.version> nos consumidores
+        id: bump
+        run: |
+          modules="$(ci/bump-consumers.sh "$LIB" "$VERSION" | paste -sd' ' -)"
+          echo "modules=${modules}" >> "$GITHUB_OUTPUT"
+          if [[ -z "$modules" ]]; then
+            echo "Todos os consumidores já usam ${LIB} ${VERSION} na ${BASE}."
+          else
+            echo "Consumidores atualizados: ${modules}"
+            git diff
+          fi
+
+      - name: Criar branch, PR e disparar CI
+        if: steps.bump.outputs.modules != ''
+        env:
+          MODULES: ${{ steps.bump.outputs.modules }}
+        run: |
+          branch="deps/${LIB}-${VERSION}"
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git commit -am "chore(deps): ${LIB} ${VERSION} em ${MODULES}"
+          git push --force origin "$branch"
+
+          run_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          body="$(printf '%s\n\n%s\n\n%s\n%s\n' \
+            "A biblioteca **${LIB}** foi publicada na versão **${VERSION}** pelo run ${run_url}." \
+            "Consumidores atualizados: \`${MODULES}\`" \
+            "O CI deste PR recompila e roda os testes de integração desses serviços contra a nova versão." \
+            "Só faça merge com o check **ci-result** verde.")"
+          if ! gh pr view "$branch" --json number >/dev/null 2>&1; then
+            gh pr create --base "$BASE" --head "$branch" \
+              --title "chore(deps): ${LIB} ${VERSION}" --body "$body"
+          fi
+
+          # PRs/pushes feitos com GITHUB_TOKEN não disparam workflows (proteção anti-loop do
+          # GitHub). workflow_dispatch é a exceção permitida, então disparamos o CI explicitamente.
+          gh workflow run ci.yml --ref "$branch" -f compare-to="$BASE"

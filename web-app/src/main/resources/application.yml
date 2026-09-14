@@ -1,0 +1,30 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: web-app
+  thymeleaf:
+    cache: false
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always
+
+# URLs for the microservices (overridable via env vars)
+services:
+  svc-misc:
+    url: ${SVC_MISC_URL:http://localhost:8081}
+  svc-calc:
+    url: ${SVC_CALC_URL:http://localhost:8082}
+
+info:
+  app:
+    name: ${spring.application.name}
+    version: "@project.version@"
+    description: "VMETRIX Web Portal"

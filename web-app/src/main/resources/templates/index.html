@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8"/>
+    <title>VMETRIX Portal</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', sans-serif; background: #f5f7fa; color: #222; }
+        header { background: #1a1a2e; color: #fff; padding: 1rem 2rem; display: flex; align-items: center; gap: 1rem; }
+        header h1 { font-size: 1.4rem; font-weight: 700; letter-spacing: 0.05em; }
+        nav { background: #16213e; padding: 0.5rem 2rem; display: flex; gap: 1.5rem; }
+        nav a { color: #aac4ff; text-decoration: none; font-size: 0.9rem; padding: 0.4rem 0; }
+        nav a:hover { color: #fff; }
+        main { max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
+        .hero { background: #fff; border-radius: 8px; padding: 2.5rem; box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 2rem; }
+        .hero h2 { font-size: 1.6rem; color: #1a1a2e; margin-bottom: 0.8rem; }
+        .hero p  { color: #555; line-height: 1.7; }
+        .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 1rem; }
+        .card { background: #fff; border-radius: 8px; padding: 1.5rem; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+        .card h3 { font-size: 1rem; color: #1a1a2e; margin-bottom: 0.5rem; }
+        .card p  { font-size: 0.85rem; color: #666; margin-bottom: 1rem; line-height: 1.5; }
+        .card a  { display: inline-block; background: #1a1a2e; color: #fff; text-decoration: none;
+                   padding: 0.4rem 1rem; border-radius: 4px; font-size: 0.85rem; }
+        footer { text-align: center; padding: 2rem; color: #aaa; font-size: 0.8rem; }
+    </style>
+</head>
+<body>
+<header>
+    <h1>VMETRIX Portal</h1>
+</header>
+<nav>
+    <a href="/">Home</a>
+    <a href="/tools/string">String Tools</a>
+    <a href="/tools/validation">Validation</a>
+    <a href="/tools/financial">Financial</a>
+    <a href="/tools/statistics">Statistics</a>
+</nav>
+<main>
+    <div class="hero">
+        <h2>Welcome to the VMETRIX Utility Portal</h2>
+        <p>This portal exposes the functionality of the <strong>misc-utils</strong> and <strong>calc-lib</strong>
+           internal libraries through a simple web interface. Use the navigation above to access string manipulation,
+           data validation, financial calculations, and descriptive statistics.</p>
+    </div>
+    <div class="cards">
+        <div class="card">
+            <h3>String Tools</h3>
+            <p>Reverse strings, detect palindromes, count words, and apply title case.</p>
+            <a href="/tools/string">Open</a>
+        </div>
+        <div class="card">
+            <h3>Validation</h3>
+            <p>Validate email addresses and Brazilian CPF numbers.</p>
+            <a href="/tools/validation">Open</a>
+        </div>
+        <div class="card">
+            <h3>Financial</h3>
+            <p>Compound and simple interest, loan instalments (PMT) and discount calculations.</p>
+            <a href="/tools/financial">Open</a>
+        </div>
+        <div class="card">
+            <h3>Statistics</h3>
+            <p>Mean, median, standard deviation, min, max and sum for any dataset.</p>
+            <a href="/tools/statistics">Open</a>
+        </div>
+    </div>
+</main>
+<footer>VMETRIX &copy; 2026 · Internal Tools</footer>
+</body>
+</html>

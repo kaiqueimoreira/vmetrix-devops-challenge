@@ -1,0 +1,22 @@
+# App-of-apps: único recurso aplicado manualmente (scripts/bootstrap-cluster.sh).
+# A partir dele o ArgoCD gerencia o AppProject e as Applications versionados em deploy/argocd/apps.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: root
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/kaiqueimoreira/vmetrix-devops-challenge.git
+    targetRevision: main
+    path: deploy/argocd/apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

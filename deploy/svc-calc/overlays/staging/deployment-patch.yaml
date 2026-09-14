@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: svc-calc
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: svc-calc
+          env:
+            - name: INFO_APP_ENVIRONMENT
+              value: staging
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              memory: 512Mi

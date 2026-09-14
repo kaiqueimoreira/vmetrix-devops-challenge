@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: svc-calc-production
+resources:
+  - ../../base
+  - pdb.yaml
+labels:
+  - pairs:
+      app.kubernetes.io/environment: production
+    includeSelectors: false
+    includeTemplates: true
+patches:
+  - path: deployment-patch.yaml
+# newTag só muda pelo workflow "promote-production" (aprovação no GitHub Environment).
+images:
+  - name: svc-calc
+    newName: ghcr.io/kaiqueimoreira/svc-calc
+    newTag: 1.0.0-bootstrap
