@@ -85,19 +85,19 @@ jobs:
     name: promote to production
     needs: resolve
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20  # inclui a espera do CI do PR de deploy
     permissions:
-      contents: write
+      contents: write       # branch do PR de deploy
+      pull-requests: write  # abrir e mergear o PR
+      actions: write        # disparar o CI no PR
     environment:
       name: production
     steps:
       - uses: actions/checkout@v4
         with:
           ref: main
-          # Deploy key com escrita, no bypass do ruleset da main (GITHUB_TOKEN não pode ter bypass).
-          # Secret do Environment `production`: só existe para jobs desse ambiente, e só após a aprovação.
-          ssh-key: ${{ secrets.GITOPS_DEPLOY_KEY }}
       - uses: ./.github/actions/gitops-set-image
+        id: gitops
         with:
           service: ${{ inputs.service }}
           environment: production
@@ -106,7 +106,9 @@ jobs:
       - name: Próximo passo
         run: |
           {
-            echo "Commit de produção publicado. A Application \`${{ inputs.service }}-production\` ficará **OutOfSync**."
+            echo "PR de deploy mergeado: ${{ steps.gitops.outputs.pr-url }}"
+            echo ""
+            echo "A Application \`${{ inputs.service }}-production\` ficará **OutOfSync**."
             echo ""
             echo "Sincronize no ArgoCD (UI ou \`argocd app sync ${{ inputs.service }}-production\`)."
           } >> "$GITHUB_STEP_SUMMARY"
