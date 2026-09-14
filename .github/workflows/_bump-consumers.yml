@@ -70,3 +70,7 @@ jobs:
           # PRs/pushes feitos com GITHUB_TOKEN não disparam workflows (proteção anti-loop do
           # GitHub). workflow_dispatch é a exceção permitida, então disparamos o CI explicitamente.
           gh workflow run ci.yml --ref "$branch" -f compare-to="$BASE"
+
+          # O run "pull_request" criado pela abertura do PR pelo bot fica preso (0 jobs) e viraria
+          # "failure" quando a branch fosse apagada no merge. A validação válida é o dispatch acima.
+          ci/cleanup-bot-pr-runs.sh "$branch" 30

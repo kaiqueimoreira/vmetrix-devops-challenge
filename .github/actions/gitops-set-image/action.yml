@@ -112,7 +112,12 @@ runs:
           exit 1
         fi
 
+        # Run "pull_request" criado pela abertura do PR pelo bot nunca executa (0 jobs) e viraria
+        # "failure" ao apagar a branch. A validação válida é o run acima: remove o preso.
+        ci/cleanup-bot-pr-runs.sh "$branch" 10
+
         gh pr merge "$branch" --squash --delete-branch --subject "$title"
+        ci/cleanup-bot-pr-runs.sh "$branch" 10
         echo "changed=true" >> "$GITHUB_OUTPUT"
         {
           echo "### 🚢 ${title}"
