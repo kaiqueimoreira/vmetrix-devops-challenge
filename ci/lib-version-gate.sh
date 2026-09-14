@@ -29,8 +29,16 @@ url="https://maven.pkg.github.com/${GITHUB_REPOSITORY}/${GROUP_ID//.//}/${ARTIFA
 code="$(curl -s -o /dev/null -w '%{http_code}' -u "${GITHUB_ACTOR}:${GITHUB_TOKEN}" "$url" || true)"
 echo "Consulta ${GROUP_ID}:${ARTIFACT_ID}:${VERSION} no GitHub Packages -> HTTP ${code}"
 
-exists=false
-[[ "$code" == "200" ]] && exists=true
+# GitHub Packages: versão existente responde 302 (redirect para o download do blob) ou 200;
+# inexistente responde 404. Qualquer outro código (401/403/5xx) é erro de consulta e NÃO
+# pode ser interpretado como "não publicada", senão o deploy tenta sobrescrever (409).
+case "$code" in
+  200|302) exists=true ;;
+  404)     exists=false ;;
+  *)
+    echo "::error file=${POM}::Não foi possível verificar ${ARTIFACT_ID} ${VERSION} no GitHub Packages (HTTP ${code})."
+    exit 1 ;;
+esac
 
 publish=true
 if [[ "$exists" == "true" ]]; then
