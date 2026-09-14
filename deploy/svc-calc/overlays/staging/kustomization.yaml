@@ -14,4 +14,4 @@ patches:
 images:
   - name: svc-calc
     newName: ghcr.io/kaiqueimoreira/svc-calc
-    newTag: 1.0.0-bootstrap
+    newTag: 1.0.0-eaee810
