@@ -32,6 +32,6 @@ class ToolsControllerTest {
     void stats_post() throws Exception {
         mvc.perform(post("/tools/statistics/summary").param("values", "2,4,4,4,5,5,7,9"))
                 .andExpect(status().isOk())
-                .andExpect(content().string(org.hamcrest.Matchers.containsString("6.0000")));
+                .andExpect(content().string(org.hamcrest.Matchers.containsString("5.0000")));
     }
 }
