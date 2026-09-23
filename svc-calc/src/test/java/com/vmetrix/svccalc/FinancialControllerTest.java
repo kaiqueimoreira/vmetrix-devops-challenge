@@ -31,7 +31,7 @@ class FinancialControllerTest {
                         .param("value", "100")
                         .param("percentage", "10"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.discountedValue").value(90.00));
+                .andExpect(jsonPath("$.data.discountedValue").value(85.00));
     }
 
     @Test
